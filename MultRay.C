@@ -1,0 +1,177 @@
+#include "TSystem.h"
+#include <iostream>
+#include <fstream>
+#include <string>
+#include "TGraph.h"
+#include "TMultiGraph.h"
+#include "TCanvas.h"
+#include "TMath.h"
+#include "TString.h"
+#include "TNtuple.h"
+#include "TAxis.h"
+#include "TStopwatch.h"
+#include "TStyle.h"
+
+const Double_t pi=4.0*atan(1.0); /**< Gives back value of Pi */
+const Double_t spedc=299792458.0; /**< Speed of Light in m/s */
+
+const Double_t A=1.78;/**< Value of Parameter A for SP model of refractive index */
+//AraSim model
+const Double_t B=-0.43; /**< Value of Parameter B for SP model of refractive index */
+const Double_t C=0.0132;/**< Value of Parameter A for SP model of refractive index. There will be a negative sign for postive depth depth. */ 
+
+//spice core ARIANNA model
+// const Double_t B=-0.427; /**< Value of Parameter B for SP model of refractive index */
+// const Double_t C=1.0/71.0;/**< Value of Parameter A for SP model of refractive index. There will be a negative sign for postive depth depth. */ 
+
+//More temperature and Lattenuation models in TF1s fFr1 and fFr2:
+//Temperature model:Takes in value of depth z and returns the value of temperature.
+//The temperature model has been taken from AraSim which also took it from here http://icecube.wisc.edu/~mnewcomb/radio/atten/ . This is basically Matt Newcomb's icecube directory which has alot of information, plots and codes about South Pole Ice activities. Please read it if you find it interesting.
+// http://icecube.wisc.edu/~mnewcomb/radio/#iceabsorbtion
+
+//Lattenuation model: Takes in value of frequency in Ghz and depth z and returns you the value of attenuation length.
+
+void MultRay(){
+
+  //Plot the ray solutions
+  Bool_t Plot=false;
+  Bool_t Flip=false;
+  Double_t x0=0;//Tx x positions
+  Double_t z0=-200;//Tx z position
+  Double_t z1=z0-100;//Set the lower limit for the rays
+  Double_t setzrange=-400;//Set the lower limit for plotting
+  Double_t setxrange=400;//Set the distance limit for plotting
+  Double_t launchangle=0;//variable defined for the for loop
+
+  Double_t h=0.1;//Step size for plotting the ray paths in m
+  Int_t totray=90;//total number of rays
+  Double_t launchinterval=1;//launch angle step size in degrees
+
+  ////Ntuples to store ray paths
+  TNtuple *ntR[totray];
+  TNtuple *ntRa[totray];
+  
+  //Ray path function x(z)
+  //for reflected ray
+  TF1 * fR=new TF1("fR","([3]/[2])*(1.0/sqrt([0]*[0]-[3]*[3]))*([2]*x-log([0]*([0]+[1]*exp([2]*x))-[3]*[3]+sqrt([0]*[0]-[3]*[3])*sqrt(pow([0]+[1]*exp([2]*x),2)-[3]*[3])))",1*pow(10,-9),20000);
+  fR->FixParameter(0,A);
+  fR->FixParameter(1,B);
+  fR->FixParameter(2,-C);
+  fR->SetParameter(3,1.5);
+
+  //For direct ray
+  TF1 * fD=new TF1("fD","([3]/[2])*(1.0/sqrt([0]*[0]-[3]*[3]))*([2]*x-log([0]*([0]+[1]*exp([2]*x))-[3]*[3]+sqrt([0]*[0]-[3]*[3])*sqrt(pow([0]+[1]*exp([2]*x),2)-[3]*[3])))",-200000, -1*pow(10,-9));
+  fD->FixParameter(0,A);
+  fD->FixParameter(1,B);
+  fD->FixParameter(2,C);
+  fD->SetParameter(3,1.5);
+
+  for(Int_t iang=0;iang<totray;iang++){    
+    launchangle=iang*1;
+    
+    Double_t lvalueD=(A+B*exp(C*z0))*sin(launchangle*(pi/180));
+    Double_t lvalueR=(A+B*exp(C*z0))*sin(launchangle*(pi/180));
+    Double_t lvalueRa=(A+B*exp(C*z0))*sin(launchangle*(pi/180));
+
+    Int_t dmax=100000;
+    Double_t zn=z1;
+ 
+    zn=z1;
+    fR->SetParameter(3,lvalueR);
+    Bool_t isRefzero=TMath::IsNaN(fR->Eval(1*pow(10,-10)));
+    ntR[iang]=new TNtuple("","","x:z");
+    for(Int_t i=0;i<dmax;i++){
+      if(TMath::IsNaN(fR->Eval(-zn))==false && zn<=0 && isRefzero==false){
+	ntR[iang]->Fill((fR->Eval(-zn)-fR->Eval(-z0)+2*fabs(fR->Eval(1*pow(10,-10))-fR->Eval(-z0))),zn);
+      }
+    
+      zn=zn+h;
+      if(zn>0){
+	i=dmax+2;      
+      }
+    }
+  
+    fD->SetParameter(3,lvalueR);
+    zn=-1*pow(10,-9);
+    for(Int_t i=0;i<dmax;i++){  
+      if(TMath::IsNaN(fD->Eval(zn))==false && isRefzero==false){
+	ntR[iang]->Fill(fD->Eval(zn)-fD->Eval(z0),zn);
+	//cout<<fD->Eval(zn)-fD->Eval(z0)<<" "<<zn<<endl;
+      }
+      
+      zn=zn-h;
+      if(zn<z0){
+	ntR[iang]->Fill(x0,z0);
+	zn=z0;
+	i=dmax+2;
+      }
+    }
+
+    
+    zn=z1;
+    fR->SetParameter(3,lvalueRa);    
+    ntRa[iang]=new TNtuple("","","x:z");
+    for(Int_t i=0;i<dmax;i++){
+      if(TMath::IsNaN(fR->Eval(-zn))==false && zn<=0 && isRefzero==true){
+	ntRa[iang]->Fill((fR->Eval(-zn)-fR->Eval(-z0)+2*fabs(fR->Eval(fabs((-1.0/C)*log((lvalueRa-A)/B)))-fR->Eval(-z0))),zn);
+      }
+    
+      zn=zn+h;
+      if(zn>-fabs((-1.0/C)*log((lvalueRa-A)/B))){
+	i=dmax+2;      
+      }
+    }
+  
+    fD->SetParameter(3,lvalueRa);
+    zn=-fabs((-1.0/C)*log((lvalueRa-A)/B));
+    for(Int_t i=0;i<dmax;i++){  
+      if(TMath::IsNaN(fD->Eval(zn))==false && isRefzero==true){
+	ntRa[iang]->Fill(fD->Eval(zn)-fD->Eval(z0),zn);
+      }
+    
+      zn=zn-h;
+      if(zn<z0){
+	ntRa[iang]->Fill(x0,z0);
+	zn=z0;
+	i=dmax+2;      
+      }
+    }
+    
+  }//iang loop
+  
+  TNtuple *nt4=new TNtuple("nt4","nt4","x:z");
+  //nt4->Fill(0,z0-100);
+  nt4->Fill(x0,z0);
+  nt4->SetMarkerStyle(20);
+  nt4->SetMarkerColor(2);
+   
+  TNtuple *nt5=new TNtuple("nt5","nt5","x:z");
+  nt5->Fill(0,setzrange);
+  nt5->Fill(setxrange,0);
+
+  gStyle->SetTitleX(0.3);
+  gStyle->SetTitleAlign(23);
+  TCanvas *c2=new TCanvas("c2","c2");
+  c2->cd();
+  
+  nt5->Draw("z:x","","P");
+  TH2F *htemp = (TH2F*)gPad->GetPrimitive("htemp");
+  // htemp->GetXaxis()->SetTitle("my new X title");
+  // htemp->GetYaxis()->SetTitle("my new Y title"); 
+  htemp->GetXaxis()->SetNdivisions(20);
+  c2->SetGridx();
+  TString title="Depth vs Distance, Tx at=";
+  title+=z0;
+  title+=" m; Distance (m);Depth (m)";
+  htemp->SetTitle(title); 
+  nt4->Draw("z:x","","SAME P");
+  
+  for(Int_t iang=0;iang<totray;iang++){
+  //for(Int_t iang=40;iang<41;iang++){
+    ////for reflected ray
+    ntR[iang]->Draw("z:x","","SAME L");
+  
+    ////for refracted ray
+    ntRa[iang]->Draw("z:x","","SAME L");
+  }
+}
